@@ -3,12 +3,14 @@ package tunelinux
 // Copyright 2019 Hewlett Packard Enterprise Development LP.
 import (
 	"bufio"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -20,6 +22,7 @@ import (
 	"github.com/hpe-storage/common-host-libs/model"
 	"github.com/hpe-storage/common-host-libs/mpathconfig"
 	"github.com/hpe-storage/common-host-libs/util"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -37,6 +40,8 @@ const (
 	// uxsockTimeoutEnvVar, when set to a valid positive integer, overrides
 	// uxsockTimeoutRecommended so deployments can tune the value without a code change.
 	uxsockTimeoutEnvVar = "MULTIPATH_UXSOCK_TIMEOUT"
+
+	multipathAppliedConfigHashPath = "/host/run/hpe-storage/multipath-config.sha256"
 
 	// multipath params
 	multipathParamPattern = "\\s*(?P<name>.*?)\\s+(?P<value>.*)"
@@ -325,6 +330,69 @@ func setMultipathRecommendations(recommendations []*Recommendation, device strin
 	return nil
 }
 
+func reconfigureMultipathdIfConfigNotApplied(configPath string, appliedHashPath string, reconfigure func() (string, error)) error {
+	config, err := os.ReadFile(configPath)
+	if err != nil {
+		return err
+	}
+
+	stateDir := filepath.Dir(appliedHashPath)
+	if err = os.MkdirAll(stateDir, 0755); err != nil {
+		return err
+	}
+	lock, err := os.OpenFile(appliedHashPath+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err = unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
+		return err
+	}
+	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+
+	currentHash := fmt.Sprintf("%x", sha256.Sum256(config))
+	appliedHash, err := os.ReadFile(appliedHashPath)
+	if err == nil && strings.TrimSpace(string(appliedHash)) == currentHash {
+		log.Info("Skipped multipathd reconfigure because the current multipath.conf settings are already applied")
+		return nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	_, err = reconfigure()
+	if err != nil {
+		return err
+	}
+	if err = writeAppliedConfigHash(appliedHashPath, currentHash); err != nil {
+		return err
+	}
+	log.Info("Successfully configured multipath.conf settings")
+	return nil
+}
+
+func writeAppliedConfigHash(filePath string, hash string) error {
+	tempFile, err := os.CreateTemp(filepath.Dir(filePath), ".multipath-config-*.tmp")
+	if err != nil {
+		return err
+	}
+	tempPath := tempFile.Name()
+	defer os.Remove(tempPath)
+
+	if _, err = tempFile.WriteString(hash + "\n"); err != nil {
+		tempFile.Close()
+		return err
+	}
+	if err = tempFile.Sync(); err != nil {
+		tempFile.Close()
+		return err
+	}
+	if err = tempFile.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tempPath, filePath)
+}
+
 // SetMultipathRecommendations sets multipath.conf settings
 func SetMultipathRecommendations() (err error) {
 	log.Traceln(">>>>> SetMultipathRecommendations")
@@ -367,13 +435,7 @@ func SetMultipathRecommendations() (err error) {
 		return err
 	}
 
-	// Reconfigure settings in any case to make sure new settings are applied
-	_, err = linux.MultipathdReconfigure()
-	if err != nil {
-		return err
-	}
-	log.Info("Successfully configured multipath.conf settings")
-	return nil
+	return reconfigureMultipathdIfConfigNotApplied(linux.MultipathConf, multipathAppliedConfigHashPath, linux.MultipathdReconfigure)
 }
 
 // ConfigureMultipath ensures following

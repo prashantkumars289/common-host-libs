@@ -3,8 +3,87 @@ package tunelinux
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 )
+
+func TestReconfigureMultipathdIfConfigNotApplied(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "multipath.conf")
+	appliedHashPath := filepath.Join(tempDir, "run", "multipath-config.sha256")
+	config := []byte("defaults {\n\tfind_multipaths no\n}\n")
+	if err := os.WriteFile(configPath, config, 0600); err != nil {
+		t.Fatalf("write multipath config: %v", err)
+	}
+	reconfigureCalls := 0
+	reconfigure := func() (string, error) {
+		reconfigureCalls++
+		return "ok", nil
+	}
+
+	if err := reconfigureMultipathdIfConfigNotApplied(configPath, appliedHashPath, reconfigure); err != nil {
+		t.Fatalf("initial reconfigureMultipathdIfConfigNotApplied() error = %v, want nil", err)
+	}
+	if reconfigureCalls != 1 {
+		t.Fatalf("reconfigure called %d times without applied state, want 1", reconfigureCalls)
+	}
+
+	if err := reconfigureMultipathdIfConfigNotApplied(configPath, appliedHashPath, reconfigure); err != nil {
+		t.Fatalf("repeat reconfigureMultipathdIfConfigNotApplied() error = %v, want nil", err)
+	}
+	if reconfigureCalls != 1 {
+		t.Fatalf("reconfigure called %d times for applied content, want 1", reconfigureCalls)
+	}
+
+	if err := os.WriteFile(configPath, append(config, []byte("devices {}\n")...), 0600); err != nil {
+		t.Fatalf("update multipath config: %v", err)
+	}
+	if err := reconfigureMultipathdIfConfigNotApplied(configPath, appliedHashPath, reconfigure); err != nil {
+		t.Fatalf("changed reconfigureMultipathdIfConfigNotApplied() error = %v, want nil", err)
+	}
+	if reconfigureCalls != 2 {
+		t.Fatalf("reconfigure called %d times for changed content, want 2", reconfigureCalls)
+	}
+}
+
+func TestReconfigureMultipathdIfConfigNotAppliedRetriesAfterFailure(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "multipath.conf")
+	appliedHashPath := filepath.Join(tempDir, "run", "multipath-config.sha256")
+	if err := os.WriteFile(configPath, []byte("defaults {}\n"), 0600); err != nil {
+		t.Fatalf("write multipath config: %v", err)
+	}
+	reconfigureCalls := 0
+	reconfigure := func() (string, error) {
+		reconfigureCalls++
+		if reconfigureCalls == 1 {
+			return "", errors.New("reconfigure failed")
+		}
+		return "ok", nil
+	}
+
+	if err := reconfigureMultipathdIfConfigNotApplied(configPath, appliedHashPath, reconfigure); err == nil {
+		t.Fatal("first reconfigureMultipathdIfConfigNotApplied() error = nil, want error")
+	}
+	if err := reconfigureMultipathdIfConfigNotApplied(configPath, appliedHashPath, reconfigure); err != nil {
+		t.Fatalf("retry reconfigureMultipathdIfConfigNotApplied() error = %v, want nil", err)
+	}
+	if reconfigureCalls != 2 {
+		t.Fatalf("reconfigure called %d times after initial failure, want 2", reconfigureCalls)
+	}
+}
+
+func TestReconfigureMultipathdIfConfigNotAppliedReturnsReadError(t *testing.T) {
+	tempDir := t.TempDir()
+	err := reconfigureMultipathdIfConfigNotApplied(filepath.Join(tempDir, "missing.conf"), filepath.Join(tempDir, "state", "hash"), func() (string, error) {
+		t.Fatal("reconfigure called when config could not be read")
+		return "", nil
+	})
+	if err == nil {
+		t.Fatal("reconfigureMultipathdIfConfigNotApplied() error = nil, want read error")
+	}
+}
 
 func TestParseMultipathDevices(t *testing.T) {
 	tests := []struct {
