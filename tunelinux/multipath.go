@@ -33,14 +33,6 @@ const (
 	// the unix domain socket timeout (in milliseconds) used by multipathd.
 	uxsockTimeoutParam = "uxsock_timeout"
 
-	// uxsockTimeoutRecommended is the default recommended value for uxsock_timeout. Keep
-	// this in sync with the value shipped in the multipath.conf.generic/upstream templates.
-	uxsockTimeoutRecommended = "300000"
-
-	// uxsockTimeoutEnvVar, when set to a valid positive integer, overrides
-	// uxsockTimeoutRecommended so deployments can tune the value without a code change.
-	uxsockTimeoutEnvVar = "MULTIPATH_UXSOCK_TIMEOUT"
-
 	multipathAppliedConfigHashPath = "/host/run/hpe-storage/multipath-config.sha256"
 
 	// multipath params
@@ -62,7 +54,7 @@ var (
 	multipathTimeoutRetrySleep = 2 * time.Second
 
 	// execCommandOutput lets tests exercise retry behavior without shelling out.
-	execCommandOutput = util.ExecCommandOutput
+	execCommandOutput = util.ExecCommandOutputWithTimeout
 )
 
 // GetMultipathConfigFile returns path of the template multipath.conf file according to OS distro
@@ -458,7 +450,7 @@ func GetMultipathDevices() (multipathDevices []model.MultipathDevice, err error)
 	defer log.Trace("<<<<< getMultipathDevices")
 
 	for try := 1; try <= multipathTimeoutMaxTries; try++ {
-		out, _, cmdErr := execCommandOutput("multipathd", []string{"show", "multipaths", "json"})
+		out, _, cmdErr := execCommandOutput("multipathd", []string{"show", "multipaths", "json"}, linux.MultipathdCommandTimeout())
 
 		multipathDevices, err = parseMultipathDevices(out)
 		if errors.Is(err, ErrMultipathTimeout) || (cmdErr != nil && linux.IsMultipathTimeoutError(cmdErr.Error())) {
@@ -730,18 +722,8 @@ func forceDeleteMultipathDevice(multipathDevice string) error {
 	return nil
 }
 
-// getUxsockTimeoutValue returns the uxsock_timeout value to apply to /etc/multipath.conf.
-// If the MULTIPATH_UXSOCK_TIMEOUT environment variable is set to a valid positive integer,
-// that value takes precedence; otherwise uxsockTimeoutRecommended is used.
+// getUxsockTimeoutValue returns the cached uxsock_timeout value to apply to
+// /etc/multipath.conf.
 func getUxsockTimeoutValue() string {
-	envValue := os.Getenv(uxsockTimeoutEnvVar)
-	if envValue == "" {
-		return uxsockTimeoutRecommended
-	}
-	if parsed, err := strconv.Atoi(envValue); err != nil || parsed <= 0 {
-		log.Warnf("Invalid value %q for env var %s (must be a positive integer), falling back to default %s",
-			envValue, uxsockTimeoutEnvVar, uxsockTimeoutRecommended)
-		return uxsockTimeoutRecommended
-	}
-	return envValue
+	return strconv.Itoa(linux.MultipathdUxsockTimeout())
 }

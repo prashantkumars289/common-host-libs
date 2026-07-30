@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/hpe-storage/common-host-libs/linux"
 )
 
 func TestReconfigureMultipathdIfConfigNotApplied(t *testing.T) {
@@ -217,7 +219,7 @@ func TestParseMultipathDevicesValidJSONWithQTimeoutsNotTimeout(t *testing.T) {
 	}
 }
 
-func withStubbedExec(t *testing.T, fn func(cmd string, args []string) (string, int, error)) {
+func withStubbedExec(t *testing.T, fn func(cmd string, args []string, timeout int) (string, int, error)) {
 	t.Helper()
 	origExec := execCommandOutput
 	origSleep := multipathTimeoutRetrySleep
@@ -233,8 +235,11 @@ var errExecTimeout = fmt.Errorf("command multipathd killed as timeout of 60 seco
 
 func TestGetMultipathDevicesRetriesOnExecTimeout(t *testing.T) {
 	calls := 0
-	withStubbedExec(t, func(cmd string, args []string) (string, int, error) {
+	withStubbedExec(t, func(cmd string, args []string, timeout int) (string, int, error) {
 		calls++
+		if timeout != linux.MultipathdCommandTimeout() {
+			t.Fatalf("timeout = %d, want %d", timeout, linux.MultipathdCommandTimeout())
+		}
 		if calls < multipathTimeoutMaxTries {
 			return "", 888, errExecTimeout
 		}
@@ -255,7 +260,7 @@ func TestGetMultipathDevicesRetriesOnExecTimeout(t *testing.T) {
 
 func TestGetMultipathDevicesExhaustsRetriesOnExecTimeout(t *testing.T) {
 	calls := 0
-	withStubbedExec(t, func(cmd string, args []string) (string, int, error) {
+	withStubbedExec(t, func(cmd string, args []string, timeout int) (string, int, error) {
 		calls++
 		return "", 888, errExecTimeout
 	})
@@ -274,7 +279,7 @@ func TestGetMultipathDevicesExhaustsRetriesOnExecTimeout(t *testing.T) {
 
 func TestGetMultipathDevicesDoesNotRetryOnNonTimeoutError(t *testing.T) {
 	calls := 0
-	withStubbedExec(t, func(cmd string, args []string) (string, int, error) {
+	withStubbedExec(t, func(cmd string, args []string, timeout int) (string, int, error) {
 		calls++
 		return "", 1, fmt.Errorf("multipathd: command not found")
 	})
@@ -293,7 +298,7 @@ func TestGetMultipathDevicesDoesNotRetryOnNonTimeoutError(t *testing.T) {
 
 func TestGetMultipathDevicesValidJSONWithQTimeoutsNoRetry(t *testing.T) {
 	calls := 0
-	withStubbedExec(t, func(cmd string, args []string) (string, int, error) {
+	withStubbedExec(t, func(cmd string, args []string, timeout int) (string, int, error) {
 		calls++
 		return `{"maps":[{"name":"mpatha","vend":"3PARdata","paths":2,"q_timeouts":0,"total_q_time":0}]}`, 0, nil
 	})

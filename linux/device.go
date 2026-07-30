@@ -876,6 +876,7 @@ func getFcTargetWwpns(volume *model.Volume) []string {
 
 // find if an existing lun has been remapped with new lun provided
 // if found, remove old paths and rescan new lun paths
+//
 //nolint:gocyclo
 func handleRemappedLun(volume *model.Volume) (err error) {
 	log.Tracef(">>> handleRemappedLun called with volume %s serial %s lun %s", volume.Name, volume.SerialNumber, volume.LunID)
@@ -1559,7 +1560,7 @@ func RescanForCapacityUpdates(devicePath string) error {
 		devicePath = strings.TrimPrefix(devicePath, "/dev/mapper/")
 		// reload multipath map to apply new size
 		args = []string{"resize", "map", devicePath}
-		out, _, err := util.ExecCommandOutput("multipathd", args)
+		out, _, err := multipathdExecCommandOutput("multipathd", args, MultipathdCommandTimeout())
 		if err != nil {
 			return err
 		}
