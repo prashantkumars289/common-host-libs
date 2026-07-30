@@ -1422,7 +1422,7 @@ func DeleteDevice(dev *model.Device) (err error) {
 // flush the device buffers
 func flushbufs(dev *model.Device) error {
 	log.Tracef("flushbufs called for %+v", dev)
-	if dev == nil && dev.AltFullPathName == "" {
+	if dev == nil || dev.AltFullPathName == "" {
 		return fmt.Errorf("device.AltFullPathName %+v not present to perform flushbufs", dev)
 	}
 	args := []string{"--flushbufs", dev.AltFullPathName}
