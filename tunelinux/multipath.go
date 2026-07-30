@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/hpe-storage/common-host-libs/linux"
 	log "github.com/hpe-storage/common-host-libs/logger"
@@ -26,8 +25,7 @@ import (
 )
 
 const (
-	multipath                = "multipath"
-	multipathTimeoutMaxTries = 3
+	multipath = "multipath"
 
 	// uxsockTimeoutParam is the multipath.conf defaults-section key that controls
 	// the unix domain socket timeout (in milliseconds) used by multipathd.
@@ -50,10 +48,7 @@ var (
 	readProcMountsMutex     sync.Mutex
 	ErrMultipathTimeout     = errors.New("multipathd timeout")
 
-	// multipathTimeoutRetrySleep is a var so tests can shorten retry delays.
-	multipathTimeoutRetrySleep = 2 * time.Second
-
-	// execCommandOutput lets tests exercise retry behavior without shelling out.
+	// execCommandOutput lets tests exercise command behavior without shelling out.
 	execCommandOutput = util.ExecCommandOutputWithTimeout
 )
 
@@ -445,31 +440,27 @@ func ConfigureMultipath() (err error) {
 	return nil
 }
 
+// GetMultipathDevices queries multipathd for the current multipath devices and
+// returns the supported and residual (orphan) devices parsed from its JSON
+// output. A transient multipathd timeout is reported as ErrMultipathTimeout so
+// callers can skip the cycle instead of treating it as a hard failure.
 func GetMultipathDevices() (multipathDevices []model.MultipathDevice, err error) {
 	log.Tracef(">>>> getMultipathDevices ")
 	defer log.Trace("<<<<< getMultipathDevices")
 
-	for try := 1; try <= multipathTimeoutMaxTries; try++ {
-		out, _, cmdErr := execCommandOutput("multipathd", []string{"show", "multipaths", "json"}, linux.MultipathdCommandTimeout())
+	out, _, cmdErr := execCommandOutput("multipathd", []string{"show", "multipaths", "json"}, linux.MultipathdCommandTimeout())
 
-		multipathDevices, err = parseMultipathDevices(out)
-		if errors.Is(err, ErrMultipathTimeout) || (cmdErr != nil && linux.IsMultipathTimeoutError(cmdErr.Error())) {
-			if try == multipathTimeoutMaxTries {
-				return nil, fmt.Errorf("failed to get the multipath devices after %d attempts: %w", multipathTimeoutMaxTries, ErrMultipathTimeout)
-			}
-			log.Warnf("Transient multipathd timeout while getting multipath devices; retrying attempt %d of %d", try+1, multipathTimeoutMaxTries)
-			time.Sleep(multipathTimeoutRetrySleep)
-			continue
-		}
-		if cmdErr != nil {
-			return nil, fmt.Errorf("failed to get the multipath devices due to the error: %s", cmdErr.Error())
-		}
-		if err != nil {
-			return nil, err
-		}
-		return multipathDevices, nil
+	multipathDevices, err = parseMultipathDevices(out)
+	if errors.Is(err, ErrMultipathTimeout) || (cmdErr != nil && linux.IsMultipathTimeoutError(cmdErr.Error())) {
+		return nil, ErrMultipathTimeout
 	}
-	return nil, ErrMultipathTimeout
+	if cmdErr != nil {
+		return nil, fmt.Errorf("failed to get the multipath devices due to the error: %s", cmdErr.Error())
+	}
+	if err != nil {
+		return nil, err
+	}
+	return multipathDevices, nil
 }
 
 func parseMultipathDevices(out string) (multipathDevices []model.MultipathDevice, err error) {

@@ -222,46 +222,21 @@ func TestParseMultipathDevicesValidJSONWithQTimeoutsNotTimeout(t *testing.T) {
 func withStubbedExec(t *testing.T, fn func(cmd string, args []string, timeout int) (string, int, error)) {
 	t.Helper()
 	origExec := execCommandOutput
-	origSleep := multipathTimeoutRetrySleep
 	execCommandOutput = fn
-	multipathTimeoutRetrySleep = 0
 	t.Cleanup(func() {
 		execCommandOutput = origExec
-		multipathTimeoutRetrySleep = origSleep
 	})
 }
 
 var errExecTimeout = fmt.Errorf("command multipathd killed as timeout of 60 seconds reached")
 
-func TestGetMultipathDevicesRetriesOnExecTimeout(t *testing.T) {
+func TestGetMultipathDevicesReturnsTimeoutError(t *testing.T) {
 	calls := 0
 	withStubbedExec(t, func(cmd string, args []string, timeout int) (string, int, error) {
 		calls++
 		if timeout != linux.MultipathdCommandTimeout() {
 			t.Fatalf("timeout = %d, want %d", timeout, linux.MultipathdCommandTimeout())
 		}
-		if calls < multipathTimeoutMaxTries {
-			return "", 888, errExecTimeout
-		}
-		return `{"maps":[{"name":"healthy","vend":"Nimble","paths":2}]}`, 0, nil
-	})
-
-	devices, err := GetMultipathDevices()
-	if err != nil {
-		t.Fatalf("GetMultipathDevices() error = %v, want nil", err)
-	}
-	if calls != multipathTimeoutMaxTries {
-		t.Fatalf("execCommandOutput called %d times, want %d", calls, multipathTimeoutMaxTries)
-	}
-	if len(devices) != 1 {
-		t.Fatalf("GetMultipathDevices() returned %d devices, want 1", len(devices))
-	}
-}
-
-func TestGetMultipathDevicesExhaustsRetriesOnExecTimeout(t *testing.T) {
-	calls := 0
-	withStubbedExec(t, func(cmd string, args []string, timeout int) (string, int, error) {
-		calls++
 		return "", 888, errExecTimeout
 	})
 
@@ -272,12 +247,12 @@ func TestGetMultipathDevicesExhaustsRetriesOnExecTimeout(t *testing.T) {
 	if devices != nil {
 		t.Fatalf("GetMultipathDevices() devices = %v, want nil", devices)
 	}
-	if calls != multipathTimeoutMaxTries {
-		t.Fatalf("execCommandOutput called %d times, want %d", calls, multipathTimeoutMaxTries)
+	if calls != 1 {
+		t.Fatalf("execCommandOutput called %d times, want 1", calls)
 	}
 }
 
-func TestGetMultipathDevicesDoesNotRetryOnNonTimeoutError(t *testing.T) {
+func TestGetMultipathDevicesReturnsNonTimeoutError(t *testing.T) {
 	calls := 0
 	withStubbedExec(t, func(cmd string, args []string, timeout int) (string, int, error) {
 		calls++
