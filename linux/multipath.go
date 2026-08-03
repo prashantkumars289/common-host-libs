@@ -82,7 +82,10 @@ func loadMultipathdTimeouts() (int, int) {
 	if uxsockTimeoutMillis%1000 != 0 {
 		uxsockTimeoutSeconds++
 	}
-	return uxsockTimeoutMillis, uxsockTimeoutSeconds + multipathCommandTimeoutMarginSeconds
+	multipathCommandTimeout := uxsockTimeoutSeconds + multipathCommandTimeoutMarginSeconds
+	log.Infof("Using multipathd uxsock timeout of %d milliseconds and executor timeout of %d seconds",
+		uxsockTimeoutMillis, multipathCommandTimeout)
+	return uxsockTimeoutMillis, multipathCommandTimeout
 }
 
 func getOrphanPathsPattern() string {
